@@ -39,7 +39,7 @@ x.table.county <- tidycencusTable("county")
 x.table.county.cori <- tidycencusCORI(x.table.county) %>%
   dplyr::select(geoid = GEOID, ends_with("2018"))
 
-dbWriteTable(coririsi_layer, "acs_county_mark", x.table.county.cori, overwrite = T)
+dbWriteTable(coririsi_layer, "acs_county_health", x.table.county.cori, overwrite = T)
 
 
 names(x.table.county)
@@ -53,12 +53,15 @@ x.table.zcta.cori <- tidycencusCORI(x.table.zcta) %>%
 x.table.zcta.cori = dbReadTable(coririsi_layer, "acs_zcta_health")
 
 # HSA ----
-
 x.geo.zcta = st_read(coririsi_layer, "geo_attr_zcta510_pg") %>%
   left_join(x.src.hsa.zip.xw, by = c('zip' = 'zipcode'))
 
+# Read HSA/ZIP crosswalk
 x.src.hsa.zip.xw = read_xls("./source/ZipHsaHrr17.xls") %>% 
   dplyr::mutate(zipcode = str_pad(zipcode2017, 5, "left", "0"))
+
+# Write table
+dbWriteTable(coririsi_source, "hrr_hsa_zipcode_crosswalk", x.src.hsa.zip.xw, overwrite = T)
 
 x.table.zcta.cori.hsa = x.geo.zcta %>% 
   left_join(x.table.zcta.cori, by = c('zip' = 'geoid')) %>% 
@@ -83,6 +86,8 @@ url_to_s3(url = "https://opendata.arcgis.com/datasets/1044bb19da8d4dbfb6a96eb1b4
 x.hospitals = st_read('./source/Definitive_Healthcare_USA_Hospital_Beds.shp')%>% 
   st_transform(4269)
 names(x.hospitals)
+
+dbWriteTable(coririsi_source, "definitive_healthcare_hospital_beds", x.hospitals)
 
 x.hospitals = st_read(coririsi_layer, "hospitals_cori_pt") %>% 
   st_transform(4269) %>% 
