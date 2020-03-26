@@ -20,7 +20,7 @@ x.hospital.dt = st_read(coririsi_layer, "hospitals_drivetime_cori_pg") %>%
   st_transform(crs = 4269) %>% 
   dplyr::filter(type %in% c('CRITICAL ACCESS', 'GENERAL ACUTE CARE'), 
                 status == "OPEN") %>% 
-  dplyr::select(-geom, -geoid) %>% 
+  dplyr::select(-geoid) %>% 
   dplyr::mutate(beds = ifelse(beds == -999, 0, beds),
                 hospital_name = name)
 
@@ -39,13 +39,14 @@ x.hospital = st_read(coririsi_source, "definitive_healthcare_hospital_beds") %>%
 
 
 x.geo.county = st_read(coririsi_layer, 'geo_attr_county_pg') %>% 
-  dplyr::select(geoid, geoid_st, name, namelsad)
+  dplyr::select(geoid, geoid_st, name, namelsad, st_stusps)
 
 # Join by point
 x.geo.county.join.pt = x.geo.county %>% 
   st_join(x.hospital) %>% 
   dplyr::group_by(geoid) %>% 
-  dplyr::summarise(hospitals_name = str_c(HOSPITAL_N, collapse = ", "),
+  dplyr::summarise(st_stusps =first(st_stusps), 
+                   hospitals_name = str_c(HOSPITAL_N, collapse = ", "),
                    county_name = first(name),
                    total_licensed_bed = sum(NUM_LICENS), 
                    total_staffed_bed = sum(NUM_STAFFE), 
