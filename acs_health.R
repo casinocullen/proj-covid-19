@@ -33,20 +33,26 @@ x.var.calc <- x.codebook %>%
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# ACS ----
+
 # County ----
 ## Table
-x.table.county <- tidycencusTable("county")
+
+
+x.table.county <- tidycencusTable(geography = "county")
 x.table.county.cori <- tidycencusCORI(x.table.county) %>%
   dplyr::select(geoid = GEOID, ends_with("2018"))
 
 dbWriteTable(coririsi_layer, "acs_county_health", x.table.county.cori, overwrite = T)
-
+x.table.county.cori = dbReadTable(coririsi_layer, "acs_county_health")
 
 # ZCTA ----
 ## Table
 x.table.zcta <- tidycencusTable("zcta")
 x.table.zcta.cori <- tidycencusCORI(x.table.zcta) %>%
   dplyr::select(geoid = GEOID, ends_with("2018"))
+
+names(x.table.zcta)
 
 dbWriteTable(coririsi_layer, "acs_zcta_health", x.table.zcta.cori, overwrite = T)
 #x.table.zcta.cori = dbReadTable(coririsi_layer, "acs_zcta_health")
@@ -58,6 +64,13 @@ x.src.hsa.zip.xw = dbReadTable(coririsi_source, "hrr_hsa_zipcode_crosswalk") %>%
   dplyr::mutate(hsanum = as.character(hsanum), 
                 hrrnum = as.character(hrrnum))
 
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# Location Analysis ----
+x.la.county = dbGetQuery(coririsi_analysis, "SELECT geoid_co, bl_count, rural_cms_blcnt, nmtc_blcnt, oz_blcnt, rural_cms_area_sum, total_area_sum FROM la_counties") %>% 
+  dplyr::mutate_if(is.integer64, as.integer)
+x.la.zcta = dbGetQuery(coririsi_analysis, "SELECT geoid_zc, bl_count, rural_cms_blcnt, nmtc_blcnt, oz_blcnt, rural_cms_area_sum, total_area_sum FROM la_zcta510") %>% 
+  dplyr::mutate_if(is.integer64, as.integer)
 
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
@@ -163,7 +176,11 @@ x.hospital.cori.hsa = x.hospital.cori %>%
                    total_cori_hospital_beds = sum(beds)) %>%
   ungroup()
 
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# Nursing home ----
 
+x.nursing.home = st_read(coririsi_source, "hifld_nursing_homes_pt")
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
@@ -172,7 +189,13 @@ x.geo.county = st_read(coririsi_layer, 'geo_attr_county_pg')
 x.health.attr.co = x.geo.county %>% 
   left_join(x.table.county.cori, by = c('geoid' = 'geoid')) %>% 
   left_join(x.hospital.beds.county, by = c('geoid' = 'geoid_co')) %>% 
-  left_join(x.hospital.cori.county, by = c('geoid' = 'geoid_co')) 
+  left_join(x.hospital.cori.county, by = c('geoid' = 'geoid_co')) %>% 
+  left_join(x.la.county, by = c('geoid' = 'geoid_co')) %>% 
+  dplyr::mutate(rural_cms_area_pct = round(rural_cms_area_sum/total_area_sum * 1000)/10, 
+                icu_beds_per_1000 = round(total_icu_bed * 10000/total_population_2018)/10,
+                icu_beds_per_1000_elder = round(total_icu_bed * 10000/population_65_over_2018)/10,
+                icu_beds_per_100k = round(total_icu_bed * 100000/total_population_2018),
+                icu_beds_per_100k_elder = round(total_icu_bed * 100000/population_65_over_2018))
 
 
 
@@ -180,7 +203,15 @@ x.geo.zcta = st_read(coririsi_layer, 'geo_attr_zcta510_pg')
 x.health.attr.zc = x.geo.zcta %>% 
   left_join(x.table.zcta.cori, by = c('geoid' = 'geoid')) %>% 
   left_join(x.hospital.beds.zcta, by = c('geoid' = 'geoid_zc')) %>% 
-  left_join(x.hospital.cori.zcta, by = c('geoid' = 'geoid_zc')) 
+  left_join(x.hospital.cori.zcta, by = c('geoid' = 'geoid_zc')) %>%
+  left_join(x.la.zcta, by = c('geoid' = 'geoid_zc')) %>% 
+  dplyr::mutate(rural_cms_area_pct = round(rural_cms_area_sum/total_area_sum * 1000)/10, 
+                icu_beds_per_1000 = round(total_icu_bed * 10000/total_population_2018)/10,
+                icu_beds_per_1000_elder = round(total_icu_bed * 10000/population_65_over_2018)/10, 
+                icu_beds_per_100k = round(total_icu_bed * 100000/total_population_2018),
+                icu_beds_per_100k_elder = round(total_icu_bed * 100000/population_65_over_2018))
+names(x.health.attr.zc)
+
 
 
 # HSA
@@ -194,12 +225,19 @@ x.health.attr.hsa = x.geo.zcta %>%
                    total_population_2018 = sum(total_population_2018), 
                    population_19_over_2018 = sum(population_19_over_2018),
                    population_65_over_2018 = sum(population_65_over_2018),
-                   population_85_over_2018 = sum(population_85_over_2018)) %>% 
+                   population_85_over_2018 = sum(population_85_over_2018), 
+                   second_home_2018 = sum(second_home_2018),
+                   total_vacant_home_2018 = sum(total_vacant_home_2018)) %>% 
   ungroup() %>% 
   left_join(x.hospital.beds.hsa, by = c('hsanum' = 'geoid_hsa'))
 
 
 # HRR
+x.hrr.scorecard = st_read(coririsi_layer, "harvard_score") %>% 
+  st_drop_geometry() %>% 
+  dplyr::mutate(hrrnum = as.character(hrrnum)) %>% 
+  dplyr::select(-hrrstate, -hrrcity)
+
 x.health.attr.hrr = x.geo.zcta %>% 
   left_join(x.table.zcta.cori, by = c('geoid' = 'geoid')) %>% 
   left_join(x.src.hsa.zip.xw, by = c('geoid' = 'zipcode')) %>% 
@@ -210,23 +248,28 @@ x.health.attr.hrr = x.geo.zcta %>%
                    total_population_2018 = sum(total_population_2018), 
                    population_19_over_2018 = sum(population_19_over_2018),
                    population_65_over_2018 = sum(population_65_over_2018),
-                   population_85_over_2018 = sum(population_85_over_2018)) %>% 
+                   population_85_over_2018 = sum(population_85_over_2018), 
+                   second_home_2018 = sum(second_home_2018),
+                   total_vacant_home_2018 = sum(total_vacant_home_2018)) %>% 
   ungroup() %>% 
-  left_join(x.hospital.beds.hrr, by = c('hrrnum' = 'geoid_hrr'))
+  left_join(x.hospital.beds.hrr, by = c('hrrnum' = 'geoid_hrr')) %>% 
+  left_join(x.hrr.scorecard, by = c('hrrnum' = 'hrrnum')) %>% 
+  janitor::clean_names()
 
+names(x.health.attr.hrr)
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # Write ----
 
-write_layer(x.health.attr.zcta, "attr_zcta_health", db = T, ngacarto = T)
-write_layer(x.health.attr.co, "attr_county_health", db = T, ngacarto = T)
-write_layer(x.health.attr.hrr, "attr_hrr_health", db = T, ngacarto = T)
-write_layer(x.health.attr.hsa, "attr_hsa_health", db = T, ngacarto = T)
+write_layer(x.health.attr.zc, "attr_zcta_health", db = T, ngacarto = T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
+write_layer(x.health.attr.co, "attr_county_health", db = T, ngacarto = T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
+write_layer(x.health.attr.hrr, "attr_hrr_health", db = T, ngacarto = T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
+#write_layer(x.health.attr.hsa, "attr_hsa_health", db = T, ngacarto = T)
 
 
+names(x.health.attr.hrr)
 
-
-
+  
 
 
 
