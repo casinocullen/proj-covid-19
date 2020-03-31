@@ -1,0 +1,408 @@
+---
+title: "county_risk_score"
+author: "Chen Chen"
+date: "3/31/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Set up
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path)); getwd();
+source("../base/global.R")
+x.date <- as.character(Sys.Date(), format = '%Y%m%d')
+
+knitr::opts_chunk$set(echo = TRUE)
+
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x)))
+}
+```
+
+## STEP 1
+## READ ACS data
+
+```{r ACS data}
+
+x.layer.name <- "attr_county_health"
+x.layer.table = st_read(coririsi_layer, x.layer.name) %>% 
+  dplyr::mutate(svi_socioeconomic = ifelse(svi_socioeconomic == -999, NA, svi_socioeconomic)) %>% 
+  drop_na(pct_65_over_2018, svi_socioeconomic)
+
+names(x.layer.table)
+```
+
+## STEP 2
+## DATA EXPLORATION
+
+
+```{r plots}
+#Beds
+hist(x.layer.table[,"total_estimated_bed_40_mins"], breaks=50)
+hist(x.layer.table[,"total_icu_bed"], breaks=50)
+
+#Staff
+hist(x.layer.table[,"total_staff"], breaks=50)
+
+#Socio-economic
+hist(x.layer.table[,"svi_socioeconomic"], breaks=50)
+# summary(x.layer.table[,"svi_socioeconomic"])
+#Demographics
+hist(x.layer.table[,"pct_65_over_2018"], breaks=50)
+summary(x.layer.table[,"pct_65_over_2018"])
+```
+
+
+
+
+
+## Beds Pillar 
+
+```{r housing index data, echo=FALSE}
+beds_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_estimated_bed_40_mins")]
+
+# Make plots
+plot_qq(beds_pillar)
+
+beds_pillar %>%
+  as.data.frame() %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free", nrow = 5) +
+    geom_histogram()
+
+
+
+```
+
+
+```{r housing index method, echo=FALSE}
+
+# Assign weights
+weight1 = 1
+weight2 = 1
+weight3 = 1
+weight4 = 1
+weight5 = 1
+weight6 = 1
+weight7 = 1
+
+# Calculate the composite index
+beds_pillar = beds_pillar %>%
+  dplyr::mutate(# Composite Index 1 uses percentile
+                bed_score_1 = ntile(total_estimated_bed_40_mins, 100),
+                # Composite Index 2 uses rescale
+                bed_score_2 = as.integer(rescale(total_estimated_bed_40_mins, to = c(0, 100))))
+
+beds_pillar_plot = beds_pillar %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Skim the distribution of the composite index
+hist(beds_pillar$bed_score_1)
+hist(beds_pillar$bed_score_2)
+
+
+# Quick Map using two indexes
+tm_shape(beds_pillar_plot) + 
+  tm_fill(col = "bed_score_1", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+tm_shape(beds_pillar_plot) + 
+  tm_fill(col = "bed_score_2", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+
+```
+
+
+
+## Staff Pillar 
+
+```{r housing index data, echo=FALSE}
+staff_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_staff")]
+
+# Make plots
+plot_qq(staff_pillar)
+
+staff_pillar %>%
+  as.data.frame() %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free", nrow = 5) +
+    geom_histogram()
+
+
+
+```
+
+
+```{r housing index method, echo=FALSE}
+
+# Assign weights
+weight1 = 1
+weight2 = 1
+weight3 = 1
+weight4 = 1
+weight5 = 1
+weight6 = 1
+weight7 = 1
+
+# Calculate the composite index
+staff_pillar = staff_pillar %>%
+  dplyr::mutate(# Composite Index 1 uses percentile
+                staff_score_1 = ntile(total_staff, 100),
+                # Composite Index 2 uses rescale
+                staff_score_2 = as.integer(rescale(total_staff, to = c(0, 100))))
+
+staff_pillar_plot = staff_pillar %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Skim the distribution of the composite index
+hist(staff_pillar$staff_score_1)
+hist(staff_pillar$staff_score_2)
+
+
+# Quick Map using two indexes
+tm_shape(staff_pillar_plot) + 
+  tm_fill(col = "staff_score_1", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+tm_shape(staff_pillar_plot) + 
+  tm_fill(col = "staff_score_2", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+
+```
+
+
+## Demographic Pillar 
+
+```{r housing index data, echo=FALSE}
+dem_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"pct_65_over_2018")]
+
+# Make plots
+plot_qq(dem_pillar)
+
+dem_pillar %>%
+  as.data.frame() %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free", nrow = 5) +
+    geom_histogram()
+
+
+
+```
+
+
+```{r housing index method, echo=FALSE}
+
+# Assign weights
+weight1 = 1
+weight2 = 1
+weight3 = 1
+weight4 = 1
+weight5 = 1
+weight6 = 1
+weight7 = 1
+
+# Calculate the composite index
+dem_pillar = dem_pillar %>%
+  dplyr::mutate(# Composite Index 1 uses percentile
+                dem_score_1 = ntile(-pct_65_over_2018, 100),
+                # Composite Index 2 uses rescale
+                dem_score_2 = as.integer(rescale(-pct_65_over_2018, to = c(0, 100))))
+
+dem_pillar_plot = dem_pillar %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Skim the distribution of the composite index
+hist(dem_pillar$dem_score_1)
+hist(dem_pillar$dem_score_2)
+
+
+# Quick Map using two indexes
+tm_shape(dem_pillar_plot) + 
+  tm_fill(col = "dem_score_1", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+tm_shape(dem_pillar_plot) + 
+  tm_fill(col = "dem_score_2", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+
+```
+
+
+
+## IHME Pillar 
+
+```{r housing index data, echo=FALSE}
+proj_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"icuover_max_needed")]
+
+# Make plots
+plot_qq(proj_pillar)
+
+proj_pillar %>%
+  as.data.frame() %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free", nrow = 5) +
+    geom_histogram()
+```
+
+```{r housing index method, echo=FALSE}
+
+# Assign weights
+weight1 = 1
+weight2 = 1
+weight3 = 1
+weight4 = 1
+weight5 = 1
+weight6 = 1
+weight7 = 1
+
+# Calculate the composite index
+proj_pillar = proj_pillar %>%
+  dplyr::mutate(# Composite Index 1 uses percentile
+                proj_score_1 = ntile(-icuover_max_needed, 100),
+                # Composite Index 2 uses rescale
+                proj_score_2 = as.integer(rescale(-icuover_max_needed, to = c(0, 100))))
+
+proj_pillar_plot = proj_pillar %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Skim the distribution of the composite index
+hist(proj_pillar$proj_score_1)
+hist(proj_pillar$proj_score_2)
+
+
+# Quick Map using two indexes
+tm_shape(proj_pillar_plot) + 
+  tm_fill(col = "proj_score_1", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+tm_shape(proj_pillar_plot) + 
+  tm_fill(col = "proj_score_2", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+
+```
+
+
+## Socio-eco Pillar 
+```{r housing index data, echo=FALSE}
+se_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"svi_socioeconomic")]
+
+# Make plots
+plot_qq(se_pillar)
+
+se_pillar %>%
+  as.data.frame() %>%
+  keep(is.numeric) %>% 
+  gather() %>% 
+  ggplot(aes(value)) +
+    facet_wrap(~ key, scales = "free", nrow = 5) +
+    geom_histogram()
+
+```
+
+
+```{r housing index method, echo=FALSE}
+
+# Assign weights
+weight1 = 1
+weight2 = 1
+weight3 = 1
+weight4 = 1
+weight5 = 1
+weight6 = 1
+weight7 = 1
+
+# Calculate the composite index
+se_pillar = se_pillar %>%
+  dplyr::mutate(# Composite Index 1 uses percentile
+                se_score_1 = svi_socioeconomic * 100)
+
+se_pillar_plot = se_pillar %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Skim the distribution of the composite index
+hist(se_pillar$se_score_1)
+
+
+# Quick Map using two indexes
+tm_shape(se_pillar_plot) + 
+  tm_fill(col = "se_score_1", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+
+
+```
+
+
+## Overall composite index
+
+``````{r overall, echo=FALSE}
+
+all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date')] %>% 
+  left_join(beds_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
+  left_join(staff_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
+  left_join(dem_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>%
+  left_join(se_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
+  left_join(proj_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
+    dplyr::mutate(risk_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
+                  risk_score_1 = ntile(risk_score, 100),
+                  risk_score_2 = as.integer(rescale(risk_score, to = c(0, 100)))) %>% 
+  dplyr::mutate(risk_level = case_when(risk_score_2 <= 20 ~ "Extremly High Risk", 
+                                       risk_score_2 > 20 & risk_score_2 <= 40 ~ "High Risk", 
+                                       risk_score_2 > 40 & risk_score_2 <= 60 ~ "Medium High Risk", 
+                                       risk_score_2 > 60 & risk_score_2 <= 80 ~ "Medium Risk", 
+                                       risk_score_2 > 80 ~ "Low Risk"))
+
+hist(all_index$risk_score)
+hist(all_index$risk_score_1)
+hist(all_index$risk_score_2)
+
+all_index_plot = all_index %>%
+  dplyr::filter(st_stusps %in% states.cont)
+
+# Quick Map using two indexes
+tm_shape(all_index_plot) + 
+  tm_fill(col = "risk_score", 
+          palette = "PuBu", 
+          breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
+  tm_legend(outside = TRUE)
+
+
+write_layer(all_index, layer.name = "county_health_risk_score", layer.type="pg", db=T, fs=T, , ngacarto=T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
+
+
+
+```
