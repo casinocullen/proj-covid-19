@@ -13,7 +13,9 @@ x.geo.county = st_read(coririsi_layer, 'geo_attr_county_pg') %>%
 
 # COVID-19 case
 x.layer.case = st_read(coririsi_layer, "covid_19_county_latest") %>% 
-  st_drop_geometry()
+  st_drop_geometry() %>% 
+  group_by(geoid) %>% 
+  dplyr::summarise_all(max)
 
 # Attr_health
 x.layer.county = st_read(coririsi_layer, "attr_county_health") %>% 
@@ -40,6 +42,13 @@ x.layer.acs = dbReadTable(coririsi_layer, "acs_county") %>%
 x.layer.staff = st_read(coririsi_layer, "hospital_critical_staff_by_county") %>% 
   st_drop_geometry()
 
+#IHME
+x.layer.ihme = st_read(coririsi_layer, "ihme_peak_dates") %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(geoid_st,  ends_with("_date"), ends_with("_needed"))
+
+
+# JOIN ALL TABLES
 x.geo.county.join.pg = x.geo.county %>% 
   st_join(x.hospital.dt) %>% 
   dplyr::group_by(geoid) %>% 
@@ -50,6 +59,7 @@ x.geo.county.join.pg = x.geo.county %>%
   left_join(x.layer.acs, by = c('geoid' = 'GEOID')) %>%
   left_join(x.layer.svi, by = c('geoid' = 'FIPS')) %>% 
   left_join(x.layer.case, by = c('geoid', 'st_stusps', 'name')) %>% 
+  left_join(x.layer.ihme, by = c('geoid_st')) %>% 
   dplyr::mutate(pop_density = total_population_2018/land_sqmi, 
                 confirm_pct = confirm/total_population_2018 * 100,
                 death_pct = deaths/confirm * 100,
@@ -76,6 +86,7 @@ x.geo.county.join.pg = x.geo.county %>%
                 
 names(x.geo.county.join.pg)
 
+# write layer
 write_layer(x.geo.county.join.pg, "attr_county_health", db = T, new.server = T, new.server.overwrite = T, ngacarto = T, ngacarto.overwrite = T) 
 
 
