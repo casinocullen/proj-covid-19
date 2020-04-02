@@ -23,13 +23,56 @@ normalize <- function(x) {
 
 ```{r ACS data}
 
+x.state.pop = dbGetQuery(coririsi_layer, "SELECT geoid, st_total_population_2018 FROM attr_state_full")
+
 x.layer.name <- "attr_county_health"
 x.layer.table = st_read(coririsi_layer, x.layer.name) %>% 
-  dplyr::mutate(svi_socioeconomic = ifelse(svi_socioeconomic == -999, NA, svi_socioeconomic)) %>% 
+  left_join(x.state.pop, by = c('geoid_st' = 'geoid')) %>% 
+  dplyr::mutate(svi_socioeconomic = ifelse(svi_socioeconomic == -999, mean(svi_socioeconomic, na.rm = T), svi_socioeconomic), 
+                total_estimated_bed_40_mins_100k = total_estimated_bed_40_mins*100000/total_population_2018,
+                total_staff_100k = total_staff*100000/total_population_2018,
+                icuover_max_needed_100k = icuover_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018)) %>% 
   drop_na(pct_65_over_2018, svi_socioeconomic)
 
 names(x.layer.table)
 ```
+
+```{r ACS data}
+x.layer.table.rg = x.layer.table %>% 
+  st_drop_geometry() %>%
+  dplyr::select(geoid, name, st_stusps, total_estimated_bed_40_mins, total_staff, pct_65_over_2018, svi_socioeconomic, icuover_max_needed, total_population_2018) %>% 
+  group_by(st_stusps) %>% 
+  dplyr::mutate(st_total_population_2018 = sum(total_population_2018)) %>%
+  ungroup() %>%
+  data.frame() %>%
+  dplyr::mutate(total_estimated_bed_40_mins_100k = total_estimated_bed_40_mins*100000/total_population_2018,
+                total_staff_100k = total_staff*100000/total_population_2018,
+                icuover_max_needed_100k = icuover_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018))
+
+
+x.layer.table.rg$norm_total_estimated_bed_40_mins_100k = normalize(x.layer.table.rg[,"total_estimated_bed_40_mins_100k"])
+
+x.layer.table.rg$norm_total_staff_100k = normalize(x.layer.table.rg[,"total_staff_100k"])
+
+x.layer.table.rg$norm_pct_65_over_2018 = normalize(x.layer.table.rg[,"pct_65_over_2018"])
+
+x.layer.table.rg$norm_svi_socioeconomic = normalize(x.layer.table.rg[,"svi_socioeconomic"])
+
+x.layer.table.rg$norm_icuover_max_needed_100k = normalize(x.layer.table.rg[,"icuover_max_needed_100k"])
+
+x.layer.table.rg = x.layer.table.rg %>% 
+  dplyr::mutate(pctl_total_estimated_bed_40_mins_100k = ntile(norm_total_estimated_bed_40_mins_100k, 100),
+                pctl_pct_65_over_2018 = ntile(-norm_pct_65_over_2018, 100),
+                pctl_total_staff_100k = ntile(norm_total_staff_100k, 100),
+                pctl_icuover_max_needed_100k = ntile(-norm_icuover_max_needed_100k, 100),
+                pctl_svi_socioeconomic = ntile(-norm_svi_socioeconomic, 100)) %>% 
+    dplyr::select(geoid, name, st_stusps, everything(), starts_with("norm_"), starts_with("pctl_"))
+
+write.csv(x.layer.table.rg, "./output/county_health_factor_sets.csv", row.names = F)
+
+names(x.layer.table.rg)
+```
+
 
 ## STEP 2
 ## DATA EXPLORATION
@@ -58,7 +101,7 @@ summary(x.layer.table[,"pct_65_over_2018"])
 ## Beds Pillar 
 
 ```{r housing index data, echo=FALSE}
-beds_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_estimated_bed_40_mins")]
+beds_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_estimated_bed_40_mins", "total_estimated_bed_40_mins_100k")]
 
 # Make plots
 plot_qq(beds_pillar)
@@ -76,7 +119,7 @@ beds_pillar %>%
 ```
 
 
-```{r housing index method, echo=FALSE}
+```{r beds pillar method, echo=FALSE}
 
 # Assign weights
 weight1 = 1
@@ -90,9 +133,9 @@ weight7 = 1
 # Calculate the composite index
 beds_pillar = beds_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
-                bed_score_1 = ntile(total_estimated_bed_40_mins, 100),
+                bed_score_1 = ntile(total_estimated_bed_40_mins_100k, 100),
                 # Composite Index 2 uses rescale
-                bed_score_2 = as.integer(rescale(total_estimated_bed_40_mins, to = c(0, 100))))
+                bed_score_2 = as.integer(rescale(total_estimated_bed_40_mins_100k, to = c(0, 100))))
 
 beds_pillar_plot = beds_pillar %>%
   dplyr::filter(st_stusps %in% states.cont)
@@ -124,7 +167,7 @@ tm_shape(beds_pillar_plot) +
 ## Staff Pillar 
 
 ```{r housing index data, echo=FALSE}
-staff_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_staff")]
+staff_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_staff", "total_staff_100k")]
 
 # Make plots
 plot_qq(staff_pillar)
@@ -156,9 +199,9 @@ weight7 = 1
 # Calculate the composite index
 staff_pillar = staff_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
-                staff_score_1 = ntile(total_staff, 100),
+                staff_score_1 = ntile(total_staff_100k, 100),
                 # Composite Index 2 uses rescale
-                staff_score_2 = as.integer(rescale(total_staff, to = c(0, 100))))
+                staff_score_2 = as.integer(rescale(total_staff_100k, to = c(0, 100))))
 
 staff_pillar_plot = staff_pillar %>%
   dplyr::filter(st_stusps %in% states.cont)
@@ -255,7 +298,7 @@ tm_shape(dem_pillar_plot) +
 ## IHME Pillar 
 
 ```{r housing index data, echo=FALSE}
-proj_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"icuover_max_needed")]
+proj_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"icuover_max_needed", "icuover_max_needed_100k")]
 
 # Make plots
 plot_qq(proj_pillar)
@@ -283,9 +326,9 @@ weight7 = 1
 # Calculate the composite index
 proj_pillar = proj_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
-                proj_score_1 = ntile(-icuover_max_needed, 100),
+                proj_score_1 = ntile(-icuover_max_needed_100k, 100),
                 # Composite Index 2 uses rescale
-                proj_score_2 = as.integer(rescale(-icuover_max_needed, to = c(0, 100))))
+                proj_score_2 = as.integer(rescale(-icuover_max_needed_100k, to = c(0, 100))))
 
 proj_pillar_plot = proj_pillar %>%
   dplyr::filter(st_stusps %in% states.cont)
@@ -345,7 +388,7 @@ weight7 = 1
 # Calculate the composite index
 se_pillar = se_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
-                se_score_1 = svi_socioeconomic * 100)
+                se_score_1 = ntile(-svi_socioeconomic, 100))
 
 se_pillar_plot = se_pillar %>%
   dplyr::filter(st_stusps %in% states.cont)
@@ -371,37 +414,45 @@ tm_shape(se_pillar_plot) +
 
 ``````{r overall, echo=FALSE}
 
-all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date')] %>% 
+all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date', 'icu_bed_max_date')] %>% 
   left_join(beds_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(staff_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(dem_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(se_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   left_join(proj_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
-    dplyr::mutate(risk_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
-                  risk_score_1 = ntile(risk_score, 100),
-                  risk_score_2 = as.integer(rescale(risk_score, to = c(0, 100)))) %>% 
-  dplyr::mutate(risk_level = case_when(risk_score_2 <= 20 ~ "Extremly High Risk", 
-                                       risk_score_2 > 20 & risk_score_2 <= 40 ~ "High Risk", 
-                                       risk_score_2 > 40 & risk_score_2 <= 60 ~ "Medium High Risk", 
-                                       risk_score_2 > 60 & risk_score_2 <= 80 ~ "Medium Risk", 
-                                       risk_score_2 > 80 ~ "Low Risk"))
+    dplyr::mutate(prep_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
+                  prep_score_1 = ntile(prep_score, 100),
+                  prep_score_2 = as.integer(rescale(prep_score, to = c(0, 100)))) %>% 
+  dplyr::mutate(prep_level = case_when(prep_score_1 <= 20 ~ "Extremely Low Preparedness", 
+                                       prep_score_1 > 20 & prep_score_1 <= 40 ~ "Low Preparedness", 
+                                       prep_score_1 > 40 & prep_score_1 <= 60 ~ "Medium Preparedness", 
+                                       prep_score_1 > 60 & prep_score_1 <= 80 ~ "High Preparedness", 
+                                       prep_score_1 > 80 ~ "Well-prepared")) %>% 
+  dplyr::mutate(svi_socioeconomic = round(svi_socioeconomic * 100)/100,
+                pct_65_over_2018 = round(pct_65_over_2018 * 10)/10,
+                total_estimated_bed_40_mins_100k = round(total_estimated_bed_40_mins_100k),
+                total_staff_100k = round(total_staff_100k),
+                icuover_max_needed_100k = round(icuover_max_needed_100k * 100)/100)
 
-hist(all_index$risk_score)
-hist(all_index$risk_score_1)
-hist(all_index$risk_score_2)
+
+names(all_index)
+
+hist(all_index$prep_score)
+hist(all_index$prep_score_1)
+hist(all_index$prep_score_2)
 
 all_index_plot = all_index %>%
   dplyr::filter(st_stusps %in% states.cont)
 
 # Quick Map using two indexes
 tm_shape(all_index_plot) + 
-  tm_fill(col = "risk_score", 
+  tm_fill(col = "prep_score", 
           palette = "PuBu", 
           breaks = c(0,10,20,30,40,50,60,70,80,90,100)) +
   tm_legend(outside = TRUE)
 
 
-write_layer(all_index, layer.name = "county_health_risk_score", layer.type="pg", db=T, fs=T, , ngacarto=T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
+write_layer(all_index, layer.name = "county_preparedness_score", layer.type="pg", db=T, fs=T, , ngacarto=T, ngacarto.overwrite = T, new.server = T, new.server.overwrite = T)
 
 
 
