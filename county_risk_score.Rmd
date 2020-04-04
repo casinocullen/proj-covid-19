@@ -457,3 +457,39 @@ write_layer(all_index, layer.name = "county_preparedness_score", layer.type="pg"
 
 
 ```
+
+```{r slim, echo=FALSE}
+
+x.layer.table = st_read(coririsi_layer, "county_preparedness_score")
+
+names(x.layer.table)
+
+x.layer.table.slim = x.layer.table %>%
+  dplyr::select(-ends_with("_2")) %>%
+  dplyr::select(geoid,
+                name,
+                st_stusps,
+                prep_score = prep_score_1,
+                prep_level,
+                icuover_max_date,
+                icu_bed_max_date,
+                bed_score = bed_score_1,
+                total_estimated_bed_40_mins,
+                total_estimated_bed_40_mins_100k,
+                staff_score = staff_score_1,
+                total_staff,
+                total_staff_100k,
+                dem_score = dem_score_1,
+                pct_65_over_2018,
+                se_score = se_score_1,
+                svi_socioeconomic, 
+                proj_score = proj_score_1,
+                icuover_max_needed,
+                icuover_max_needed_100k)
+
+write_layer(x.layer.table.slim, layer.name = "county_preparedness_score_v0_1", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
+
+
+
+```
+
