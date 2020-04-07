@@ -6,6 +6,7 @@ rm(list=ls(pattern=("(^x\\.)")))
 
 
 source("../base/global.R")
+x.date <- as.character(Sys.Date(), format = '%m_%d_%Y')
 
 
 
@@ -15,12 +16,12 @@ url_to_s3(url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-co
           s3path = "source/proj-covid-19/", 
           s3bucket =  "cori-layers")
 
-unzip("./source/ihme-covid19.zip", exdir = "./source/")
+unzip("./source/ihme-covid19.zip", exdir = "./source/ihme/", junkpaths = T) 
 
 
-x.src.ihme = fread("./source/2020_03_31.1/Hospitalization_all_locs.csv")
+x.src.ihme = fread("./source/ihme/Hospitalization_all_locs.csv")
 
-dbWriteTable(coririsi_source, "ihme_state_projection", x.src.ihme, overwrite = T)
+#dbWriteTable(coririsi_source, "ihme_state_projection", x.src.ihme, overwrite = T)
 
 
 # Layer table
@@ -43,12 +44,14 @@ x.layer.ihme = x.src.ihme %>%
                 icuover_max_needed = case_when(max(icuover_mean) == icuover_mean ~ icuover_mean)) %>% 
   ungroup() %>% 
   group_by(location_name) %>% 
-  dplyr::summarise_all(max) %>% 
+  dplyr::summarise_all(funs(max(., na.rm = TRUE))) %>%
   dplyr::select(location_name, ends_with("_date"), ends_with("_needed")) %>% 
-  janitor::clean_names()
+  janitor::clean_names() %>%
+  dplyr::mutate(last_update = x.date)
 
 x.layer.ihme.geo = x.geo.state %>%
   left_join(x.layer.ihme, by = c('name' = 'location_name')) %>%
   drop_na(icuover_max_needed)
 
-write_layer(x.layer.ihme.geo, "ihme_peak_dates", db =T , fs = T, ngacarto = T, ngacarto.overwrite = T, new.server.overwrite = T, new.server = T)
+write_layer(x.layer.ihme.geo, paste0("ihme_peak_dates_",x.date), db =T , fs = T, ngacarto = T, ngacarto.overwrite = T, new.server.overwrite = T, new.server = T)
+
