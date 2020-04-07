@@ -83,24 +83,51 @@ saveRDS(x.npi.filter.batch.5,"./output/x.npi.filter.batch.5.RDS")
 x.npi.filter.dt = NULL
 i = 1
 while (i <= nrow(x.npi.filter.batch.1)) {
+  
+  if(round(x.npi.filter.batch.1[i,"lon"]) == 0 | round(x.npi.filter.batch.1[i,"lat"]) == 0){
+    i = i + 1
+    next
+  }
+  
   onepoint_info = x.npi.filter.batch.1[i, ]
   onepoint_info_expanded <- onepoint_info[rep(row.names(onepoint_info), 2), ]
   
   onepoint = NULL
+  attempt = 1
   while(is.null(onepoint)) {
-    try(
+    tryCatch(expr = {
       onepoint <- osrmIsochrone(loc = c(x.npi.filter.batch.1[i,"lon"], x.npi.filter.batch.1[i,"lat"]), breaks = c(40,75),
                                 returnclass="sf") %>% 
-        dplyr::select(driveTime = max, geometry))
+        dplyr::select(driveTime = max, geometry)}, 
+      error=function(e)
+      {
+        print(paste0("ERROR: ", e, ", ATTEMPT: ", attempt))
+      }
+    )
     
+    attempt = attempt + 1
+    if (attempt >= 10) {
+      i = i + 1
+      next
+    }
   }
+  
   if(nrow(onepoint) == 2){
     print(paste0("SUCCESSFULLY INPUT ", x.npi.filter.batch.1[i,"npi"]))
     onepoint_info_expanded = bind_cols(onepoint_info_expanded, onepoint)
     x.npi.filter.dt = rbind(x.npi.filter.dt, onepoint_info_expanded)
     i = i + 1
   }
+  if(i %% 1000 == 0){
+    print(paste0("====Finished: ", as.character(i), " points!====="))
+    st_write(x.npi.filter.dt, "./output/x.npi.filter.dt.batch.1.gpkg")
+  }
+  
+  
 }
 
+x.npi.filter.dt = x.npi.filter.dt %>% 
+  st_as_sf(geometry = x.npi.filter.dt$geometry)
 
+write_layer(x.npi.filter.dt, "npi_drivetime_40_75_b1", db = T)
 
