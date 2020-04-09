@@ -1,4 +1,3 @@
-
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # SETUP  ----
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
@@ -7,6 +6,7 @@ require(tidyverse)
 require(sf)
 require(DBI)
 require(data.table)
+require(scales)
 source("/data/Github/base/functions/write_layer_absolute.R")
 
 # cori-risi connection
@@ -24,6 +24,16 @@ coririsi_layer = dbConnect(
   port     = coririsiconf$port,
   options  =  '-c search_path=sch_layer,public'
 )
+coririsi_source = dbConnect(
+  RPostgres::Postgres(),
+  user     = coririsiconf$user,
+  password = coririsiconf$password,
+  dbname   = coririsiconf$dbname,
+  host     = coririsiconf$host,
+  port     = coririsiconf$port,
+  options  =  '-c search_path=sch_source,public'
+)
+
 #dbListTables(coririsi)
 
 rm(coririsiconf)
@@ -35,10 +45,10 @@ x.date <- as.character(Sys.Date(), format = '%m-%d-%Y')
 
 
 # Source Table
-url_to_s3(url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-covid19.zip", 
-          filename = "ihme-covid19.zip", 
-          s3path = "source/proj-covid-19/", 
-          s3bucket =  "cori-layers")
+# url_to_s3(url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-covid19.zip", 
+#           filename = "ihme-covid19.zip", 
+#           s3path = "source/proj-covid-19/", 
+#           s3bucket =  "cori-layers")
 
 utils::unzip("./source/ihme-covid19.zip", exdir = "./source/ihme/", junkpaths = T, overwrite = T) 
 
@@ -214,6 +224,7 @@ x.layer.table = st_read(coririsi_layer, x.layer.name) %>%
 beds_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_estimated_bed_40_mins", "total_estimated_bed_40_mins_100k")]
 beds_pillar = beds_pillar %>%
   dplyr::mutate(
+    total_estimated_bed_40_mins = ifelse(is.na(total_estimated_bed_40_mins), 0, total_estimated_bed_40_mins),
     total_estimated_bed_40_mins_100k = ifelse(is.na(total_estimated_bed_40_mins_100k), 0, total_estimated_bed_40_mins_100k),
     # Composite Index 1 uses percentile
     bed_score_1 = ntile(total_estimated_bed_40_mins_100k, 100),
@@ -260,6 +271,8 @@ all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date', 
   left_join(se_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   left_join(proj_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   dplyr::mutate(prep_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
+                prep_score_old = ( bed_score_1 + staff_score_2 + dem_score_1 + se_score_1 + proj_score_1) / 5,
+                prep_score_old = ntile(prep_score_old, 100),
                 prep_score_1 = ntile(prep_score, 100),
                 prep_score_2 = as.integer(rescale(prep_score, to = c(0, 100))),
                 prep_level = case_when(prep_score_1 <= 20 ~ "Very Low", 
@@ -275,13 +288,11 @@ all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date', 
                 icuover_max_needed_100k = round(icuover_max_needed_100k * 100)/100)
 
 names(all_index)
-
-ss = "https://docs.google.com/spreadsheets/d/1W1M0j4NF6GQgsxPG9pNaspT-unlhqfEW6pTnffDzGcQ/edit#gid=0"
-sheets_write(ss, data = all_index %>% st_drop_geometry())
-
 write_layer_absolute(all_index, layer.name = "county_preparedness_score", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
 
-#
+
+
+# Shareable version
 all_index_share = all_index %>%
   dplyr::select(geoid,
                 name,
@@ -306,6 +317,80 @@ all_index_share = all_index %>%
                 last_ihme_update = last_update)
 
 write_layer_absolute(all_index_share, layer.name = "county_preparedness_score_v0_3", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
+
+
+
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+# Data Validation  ----
+# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
+all_index = st_read(coririsi_layer, "county_preparedness_score") %>% 
+  dplyr::mutate(prep_score = (0.5*bed_score_1 + 0.5*staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 4,
+                prep_score_old = (bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
+                prep_score_1 = ntile(prep_score, 100),
+                prep_score_old = ntile(prep_score_old, 100),
+                prep_level = case_when(prep_score_1 <= 20 ~ "Very Low", 
+                                       prep_score_1 > 20 & prep_score_1 <= 40 ~ "Low", 
+                                       prep_score_1 > 40 & prep_score_1 <= 60 ~ "Medium", 
+                                       prep_score_1 > 60 & prep_score_1 <= 80 ~ "High", 
+                                       prep_score_1 > 80 ~ "Very High"))
+  
+write_layer_absolute(all_index, layer.name = "county_preparedness_score_v0_4", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
+
+all_index_lm = lm(data = all_index, formula = all_index$prep_score_1 ~ all_index$total_estimated_bed_40_mins_100k + all_index$total_estimated_bed_40_mins_100k + all_index$total_staff_dt_100k + all_index$svi_socioeconomic + all_index$icuover_max_needed_100k)
+
+summary(all_index_lm)
+
+plot(all_index_lm)
+anova(all_index_lm)
+
+library("Hmisc")
+all_index_num = all_index %>% dplyr::select_if(is.numeric) %>% st_drop_geometry
+all_index_vars = all_index[,c("total_estimated_bed_40_mins_100k",
+                              "total_staff_dt_100k",
+                              "pct_65_over_2018",
+                              "svi_socioeconomic",
+                              "icuover_max_needed_100k")]%>% st_drop_geometry
+
+all_index_corr <- rcorr(as.matrix(all_index_num))
+
+# Functions
+flattenCorrMatrix <- function(cormat, pmat) {
+  ut <- upper.tri(cormat)
+  data.frame(
+    row = rownames(cormat)[row(cormat)[ut]],
+    column = rownames(cormat)[col(cormat)[ut]],
+    cor  =(cormat)[ut],
+    p = pmat[ut]
+  )
+}
+rsq <- function (x, y) cor(x, y) ^ 2
+
+# Correlation/r^2 for 
+all_index_corr_df = flattenCorrMatrix(all_index_corr$r, all_index_corr$P)
+all_index_corr = as.data.frame(all_index_corr$r) %>% rownames_to_column()
+all_index_r2_df =  as.data.frame(cor(all_index_num)^2) %>% rownames_to_column()
+
+
+# Write googlesheet
+ss = "https://docs.google.com/spreadsheets/d/1W1M0j4NF6GQgsxPG9pNaspT-unlhqfEW6pTnffDzGcQ/edit#gid=0"
+googlesheets4::sheets_write(ss, data = all_index %>% st_drop_geometry())
+googlesheets4::sheets_write(ss, data = all_index_corr,sheet = "correlation")
+googlesheets4::sheets_write(ss, data = all_index_corr_df,sheet = "correlation long")
+googlesheets4::sheets_write(ss, data = all_index_r2_df,sheet = "r-sq")
+
+# Plot
+library(corrplot)
+res <- cor(all_index_vars)
+round(res, 2)
+
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45, tl.cex = 0.8)
+
+# Histogram
+hist.data.frame(all_index_vars)
+
+library(PerformanceAnalytics)
+chart.Correlation(all_index_vars, histogram=TRUE, pch=19)
 
 
 rm(list = ls())
