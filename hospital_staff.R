@@ -18,12 +18,15 @@ unzip("./source/NPPES_Data_Dissemination_March_2020.zip", exdir = "./source/")
 
 
 # Read layer
-x.npi = st_read(coririsi_layer, "npi_taxonomy_group") 
-
+x.npi = st_read("./output/npi_taxonomy_group.gpkg") 
 x.npi[c('lon','lat')] = x.npi %>% st_coordinates()
-
 x.npi = x.npi %>%
   st_drop_geometry()
+
+dbWriteTable(coririsi_source, "npi_taxonomy_group", x.npi)
+
+
+
 
 x.npi.summary = GetCodebookFieldValues(x.npi %>% as.data.frame, x.max.value.cnt = 300)
 
