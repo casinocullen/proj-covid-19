@@ -1,67 +1,58 @@
-# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
-# Health ACS Vars ----
-# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
-# Database connections ----
-rm(list=ls(pattern=("(^x\\.)")))
 
-source("../tidycensus/tidycencus-functions.R")
-source("../tidycensus/.Rprofile")
+require(tidyverse)
+require(sf)
+source("../base/connections/coririsi_source.R")
+source("../base/connections/coririsi_layer.R")
+source("../base/functions/write_layer.R")
 
-source("../base/global.R")
+# Get Harvard data
+score = dbReadTable(coririsi_source, "hrr_scorecard") %>%
+  filter(scenario == "60%")
 
-
-x.codebook <- tidycencusFields("health")
-
-# <><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><>
-# Variables ----
-
-# Variables from codebook that will be renamed
-x.var.rename <- x.codebook %>%
-  dplyr::filter(Destiny == "rename")
-
-# Variables from codebook that be used as sources for calculated fields and then deleted
-x.var.source <- x.codebook %>%
-  dplyr::filter(Destiny == "source-delete")
-
-# Variables from codebook that have formulas ready to go
-x.var.formula <- x.codebook %>%
-  dplyr::filter(Destiny == "formula")
-
-# Variables from codebook that will need formulas built in R
-x.var.calc <- x.codebook %>%
-  dplyr::filter(Destiny == "calculate")
-
-# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
-# ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
-# County ----
-## Table
-x.table.county <- tidycencusTable("county")
-x.table.county.cori <- tidycencusCORI(x.table.county) %>%
-  dplyr::select(geoid = GEOID, ends_with("2018"))
-
-dbWriteTable(coririsi_layer, "acs_county_health", x.table.county.cori, overwrite = T)
+# Get zipcode HRR/HSA crosswalk
+crosswalk = dbReadTable(coririsi_source, "hrr_hsa_zipcode_crosswalk") %>%
+  mutate(zip = str_pad(zipcode2017, 5, "left", "0"))
 
 
-names(x.table.county)
+# Get Zipcode polygons
+acs.zcta = dbReadTable(coririsi_layer, "acs_zcta")
+geo.zcta = st_read(coririsi_layer, "attr_zcta") %>%
+  left_join(acs.zcta, by = c("geoid" = "GEOID"))
 
-# ZCTA ----
-## Table
-x.table.zcta <- tidycencusTable("zcta")
-x.table.zcta.cori <- tidycencusCORI(x.table.zcta) %>%
-  dplyr::select(geoid = GEOID, ends_with("2018"))
+# Create HRR geo and add harvard data
+hrr = geo.zcta %>%
+  left_join(crosswalk, by = c("geoid" = "zip")) %>%
+  group_by(hrrnum, hrrcity, hrrstate) %>%
+  dplyr::summarize(
+     pop = sum(total_population_2018),
+     rural_area_pct_cms = mean(rural_area_pct_cms)
+    ) %>%
+  mutate(HRR = paste0(hrrcity, ", ", hrrstate))
 
-x.table.zcta.cori = dbReadTable(coririsi_layer, "acs_zcta_health")
+hrr.score = hrr %>%
+  left_join(score, by = c("HRR" = "HRR"))
 
-# HSA ----
-x.geo.zcta = st_read(coririsi_layer, "geo_attr_zcta510_pg") %>%
-  left_join(x.src.hsa.zip.xw, by = c('zip' = 'zipcode'))
+write_layer(hrr.score, "harvard_score_3", fs = T, s3 = F, db = T, ngacarto = T, ngacarto.overwrite = T)
 
-# Read HSA/ZIP crosswalk
-x.src.hsa.zip.xw = read_xls("./source/ZipHsaHrr17.xls") %>% 
-  dplyr::mutate(zipcode = str_pad(zipcode2017, 5, "left", "0"))
+
+
+
+# Create HSA geo and add harvard data
+
+  
+  
+# Add harvard data to zip
+
+
+
+
+
+## EXAMPLE CODE
 
 # Write table
 dbWriteTable(coririsi_source, "hrr_hsa_zipcode_crosswalk", x.src.hsa.zip.xw, overwrite = T)
+
+
 
 x.table.zcta.cori.hsa = x.geo.zcta %>% 
   left_join(x.table.zcta.cori, by = c('zip' = 'geoid')) %>% 
@@ -76,23 +67,6 @@ plot(x.table.zcta.cori.hsa$geom)
 
 write_layer(x.table.zcta.cori.hsa, "acs_hsa", db = T, ngacarto = T)
 
-# hospitals
-url_to_s3(url = "https://opendata.arcgis.com/datasets/1044bb19da8d4dbfb6a96eb1b4ebf629_0.zip", 
-          filename = "1044bb19da8d4dbfb6a96eb1b4ebf629_0.zip", 
-          s3path = "source/data-hospitals/", 
-          s3bucket =  "cori-layers")
-
-
-x.hospitals = st_read('./source/Definitive_Healthcare_USA_Hospital_Beds.shp')%>% 
-  st_transform(4269)
-names(x.hospitals)
-
-dbWriteTable(coririsi_source, "definitive_healthcare_hospital_beds", x.hospitals)
-
-x.hospitals = st_read(coririsi_layer, "hospitals_cori_pt") %>% 
-  st_transform(4269) %>% 
-  dplyr::filter(status == "OPEN",
-                beds != -999)
 
 
 x.table.zcta.cori.hsa.pt = x.table.zcta.cori.hsa %>% 
