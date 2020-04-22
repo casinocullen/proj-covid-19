@@ -126,6 +126,74 @@ write_layer(x.geo.county.join.pg, "attr_county_health", db = T, new.server = T, 
 
 
 
+#######################################
+# Attr Health v2
+
+x.layer.def.hc.pt = st_read(coririsi_layer, "definitive_healthcare_hospital_beds")%>% 
+  st_transform(crs = 4269)
+
+x.layer.def.hc.dt.40 = st_read(coririsi_layer, "definitive_healthcare_hospital_drivetime") %>% 
+  dplyr::filter(driveTime == 40) %>% 
+  st_transform(crs = 4269)
+
+names(x.layer.def.hc.pt)
+
+x.layer.close.pt = st_read(coririsi_layer, "cori_master_closed_hospitals_dataset_preliminary_v0_2") %>% 
+  st_transform(crs = 4269) %>% 
+  dplyr::select(-geoid)
+
+x.layer.close.dt.40 = st_read(coririsi_layer, "cori_master_closed_hospitals_dataset_drive_time") %>% 
+  dplyr::filter(driveTime == 40) %>% 
+  st_transform(crs = 4269) %>% 
+  dplyr::select(-geoid)
+
+names(x.layer.close.pt)
+
+# Open point
+x.layer.def.hc.pt.county = x.geo.county %>% 
+  st_join(x.layer.def.hc.pt) %>% 
+  dplyr::group_by(geoid) %>% 
+  dplyr::summarise(open_hospital_count = n_distinct(objectid),
+                   open_hospital_licensed_bed_count = sum(num_licens), 
+                   open_hospital_staffed_bed_count = sum(num_staffe), 
+                   open_hospital_icu_bed_count = sum(num_icu_be)) %>% 
+  ungroup() %>% 
+  st_drop_geometry()
+
+x.layer.def.hc.dt.county = x.geo.county %>% 
+  st_join(x.layer.def.hc.dt.40) %>% 
+  dplyr::group_by(geoid) %>% 
+  dplyr::summarise(open_hospital_40_min_count = n_distinct(objectid),
+                   open_hospital_40_min_licensed_bed_count = sum(num_licens), 
+                   open_hospital_40_min_staffed_bed_count = sum(num_staffe), 
+                   open_hospital_40_min_icu_bed_count = sum(num_icu_be)) %>% 
+  ungroup() %>% 
+  st_drop_geometry()
+
+x.layer.close.pt.county = x.geo.county %>% 
+  st_join(x.layer.close.pt) %>% 
+  dplyr::group_by(geoid) %>% 
+  dplyr::summarise(close_hospital_count = n_distinct(rowname),
+                   close_hospital_bed_count = sum(beds)) %>% 
+  ungroup() %>% 
+  st_drop_geometry()
+
+x.layer.close.dt.county = x.geo.county %>% 
+  st_join(x.layer.close.dt.40) %>% 
+  dplyr::group_by(geoid) %>% 
+  dplyr::summarise(close_hospital_40_min_count = n_distinct(rowname),
+                   close_hospital_40_min_bed_count = sum(beds)) %>% 
+  ungroup() %>% 
+  st_drop_geometry()
+
+# Combine all 
+x.attr.hosp = x.geo.county %>% 
+  left_join(x.layer.def.hc.pt.county, by = "geoid") %>% 
+  left_join(x.layer.def.hc.dt.county, by = "geoid") %>% 
+  left_join(x.layer.close.pt.county, by = "geoid") %>% 
+  left_join(x.layer.close.dt.county, by = "geoid") 
+
+write_layer(x.attr.hosp, 'attr_county_hospital', db = T, new.server = T)
 
 
 
