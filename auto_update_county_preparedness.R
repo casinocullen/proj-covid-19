@@ -49,6 +49,7 @@ x.date <- as.character(Sys.Date(), format = '%m-%d-%Y')
 # Source Table
 url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-covid19.zip"
 
+# Get source file
 file.remove("./source/ihme-covid19.zip")
 curl::curl_download(url, "./source/ihme-covid19.zip")
 
@@ -59,12 +60,15 @@ utils::unzip("./source/ihme-covid19.zip", exdir = "./source/ihme/", overwrite = 
 # Find the latest ihme update
 all_ihme_dirs = list.dirs(path = "./source/ihme/", full.names = TRUE, recursive = TRUE)
 all_ihme_dirs_dates = as.Date(str_extract(all_ihme_dirs, "\\d+_\\d+_\\d+"), format = "%Y_%m_%d")
+
 latest_ihme_update = max(all_ihme_dirs_dates, na.rm = T)
 
 # Read IHME
 x.src.ihme = fread("./source/ihme/Hospitalization_all_locs.csv")
 x.geo.state = st_read(coririsi_layer, 'geo_attr_state_pg')
 
+# Create all the _max_needed and _max_date field we want
+# The source has one record per model day per location (state/country) so we have to group_by and summarize to get one record per location
 x.layer.ihme = x.src.ihme %>% 
   dplyr::mutate(date = as.Date(date, format = "%Y-%m-%d")) %>% 
   group_by(location_name) %>% 
@@ -80,17 +84,23 @@ x.layer.ihme = x.src.ihme %>%
                 admis_max_needed = case_when(max(admis_mean) == admis_mean ~ admis_mean),
                 icuover_max_date = case_when(max(icuover_mean) == icuover_mean ~ date),
                 icuover_max_needed = case_when(max(icuover_mean) == icuover_mean ~ icuover_mean)) %>% 
+  #TODO: Don't know why we have to ungroup and regroup again here.
   ungroup() %>% 
   group_by(location_name) %>% 
+  #TODO: I assume `max` could be any function that returns one of the values since they all should be the same?
   dplyr::summarise_all(funs(max(., na.rm = TRUE))) %>%
+  # Just keep the fields we created and the location name
   dplyr::select(location_name, ends_with("_date"), ends_with("_needed")) %>% 
   janitor::clean_names() %>%
+  # Add latest_ihme_update that we determined before
   dplyr::mutate(last_update = latest_ihme_update)
 
+# Remove records that are not a U.S. State. (Countries)
 x.layer.ihme.geo = x.geo.state %>%
   left_join(x.layer.ihme, by = c('name' = 'location_name')) %>%
   drop_na(icuover_max_needed)
 
+# Write resulting table to our database with date stamp, so we have historical numbers
 latest_ihme_update_us = as.character(latest_ihme_update, format = '%m_%d_%Y')
 write_layer_absolute(x.layer.ihme.geo, paste0("ihme_peak_dates_",latest_ihme_update_us), db =T)
 
@@ -101,35 +111,45 @@ write_layer_absolute(x.layer.ihme.geo, paste0("ihme_peak_dates_",latest_ihme_upd
 x.geo.county = st_read(coririsi_layer, 'geo_attr_county_pg') 
 
 # COVID-19 case
+#TODO: Have not done code review on code that created `x.layer.case`
 x.layer.case = st_read(coririsi_layer, "covid_19_county_latest") %>% 
   st_drop_geometry() %>% 
+  #TODO: Why `group_by`? Don't we just have one per county?
   group_by(geoid) %>% 
   dplyr::summarise_all(max) %>% 
   dplyr::select(geoid, covid_19_latest_update = latest_update, confirm, deaths, recovered, active)
 
 # Attr_health
+#TODO: Have not done code review on code that created `x.layer.county`
 x.layer.county = st_read(coririsi_layer, "acs_county_health") 
 
 # CDC SVI
+#TODO: Have not done code review on code that created `x.layer.svi`
 x.layer.svi = dbReadTable(coririsi_source, "cdc_svi") %>%
   dplyr::select(FIPS, EP_NOVEH, EP_MUNIT, EP_DISABL, RPL_THEME1, RPL_THEMES)
 
 # Hospital drive time
+#TODO: Have not done code review on code that created `x.hospital.dt`
+#TODO: We will want to update this once we have a new drivetime layer
 x.hospital.dt = st_read(coririsi_layer, "hospitals_drivetime_cori_pg") %>%
   st_transform(crs = 4269) %>% 
   dplyr::filter(type %in% c('CRITICAL ACCESS', 'GENERAL ACUTE CARE'), 
                 status == "OPEN") %>% 
-  dplyr::select(-geoid) %>% 
+  dplyr::select(-geoid) %>%
+  #TODO: What does -999 mean in the data? Should we be assuming no beds?
   dplyr::mutate(beds = ifelse(beds == -999, 0, beds),
                 hospital_name = name)
 
+# Get hospital drive times that overlap with counties 
 x.hospital.dt.county = x.geo.county %>% 
   st_join(x.hospital.dt) %>% 
   dplyr::group_by(geoid) %>% 
   dplyr::summarise(hospitals_name_40_mins = str_c(hospital_name, collapse = ", "),
                    total_estimated_bed_40_mins = sum(beds)) %>% 
   st_drop_geometry()
+#TODO: What does `although coordinates are longitude/latitude, st_intersects assumes that they are planar` mean in our use case?
 
+#TODO: STOPPED HERE
 # Hospital Points
 x.hospital.beds = st_read(coririsi_layer, "definitive_healthcare_hospital_beds") %>% 
   dplyr::filter(HOSPITAL_T %in% c('Critical Access Hospital', 'VA Hospital', 'Short Term Acute Care Hospital')) 
