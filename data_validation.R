@@ -1,3 +1,4 @@
+source("../base/global.R")
 
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
@@ -71,4 +72,16 @@ hist.data.frame(all_index_vars)
 
 library(PerformanceAnalytics)
 chart.Correlation(all_index_vars, histogram=TRUE, pch=19)
+
+# Pillar summary
+all_index_summary = st_read(coririsi_layer, "county_preparedness_score") %>% 
+  st_drop_geometry() %>% 
+  group_by(st_stusps) %>%
+  dplyr::summarise_all(mean)
+
+hist(all_index$icu_bed_max_needed_100k, xlim = c(0, 0.1), breaks = 5000)
+
+names(all_index)
+write.csv(all_index, "./output/raw_bed_staff_40_min_v2.csv", row.names = F)
+
 
