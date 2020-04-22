@@ -7,7 +7,10 @@ require(sf)
 require(DBI)
 require(data.table)
 require(scales)
+require(tools)
+require(aws.s3)
 source("/data/Github/base/functions/write_layer_absolute.R")
+source("/data/Github/base/functions/url_to_s3.R")
 
 # cori-risi connection
 #   host: cori-risi
@@ -15,6 +18,7 @@ source("/data/Github/base/functions/write_layer_absolute.R")
 # Schema: layer
 
 coririsiconf <- config::get("cori-risi", file = "/data/Github/base/config.yml")
+cartoconf <- config::get("cartoapi", file = "/data/Github/base/config.yml")
 coririsi_layer = dbConnect(
   RPostgres::Postgres(),
   user     = coririsiconf$user,
@@ -33,10 +37,8 @@ coririsi_source = dbConnect(
   port     = coririsiconf$port,
   options  =  '-c search_path=sch_source,public'
 )
-
 #dbListTables(coririsi)
 
-rm(coririsiconf)
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # IHME  ----
@@ -45,13 +47,21 @@ x.date <- as.character(Sys.Date(), format = '%m-%d-%Y')
 
 
 # Source Table
-# url_to_s3(url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-covid19.zip", 
-#           filename = "ihme-covid19.zip", 
-#           s3path = "source/proj-covid-19/", 
-#           s3bucket =  "cori-layers")
+url = "https://ihmecovid19storage.blob.core.windows.net/latest/ihme-covid19.zip"
+
+file.remove("./source/ihme-covid19.zip")
+curl::curl_download(url, "./source/ihme-covid19.zip")
+
 
 utils::unzip("./source/ihme-covid19.zip", exdir = "./source/ihme/", junkpaths = T, overwrite = T) 
+utils::unzip("./source/ihme-covid19.zip", exdir = "./source/ihme/", overwrite = T) 
 
+# Find the latest ihme update
+all_ihme_dirs = list.dirs(path = "./source/ihme/", full.names = TRUE, recursive = TRUE)
+all_ihme_dirs_dates = as.Date(str_extract(all_ihme_dirs, "\\d+_\\d+_\\d+"), format = "%Y_%m_%d")
+latest_ihme_update = max(all_ihme_dirs_dates, na.rm = T)
+
+# Read IHME
 x.src.ihme = fread("./source/ihme/Hospitalization_all_locs.csv")
 x.geo.state = st_read(coririsi_layer, 'geo_attr_state_pg')
 
@@ -75,13 +85,14 @@ x.layer.ihme = x.src.ihme %>%
   dplyr::summarise_all(funs(max(., na.rm = TRUE))) %>%
   dplyr::select(location_name, ends_with("_date"), ends_with("_needed")) %>% 
   janitor::clean_names() %>%
-  dplyr::mutate(last_update = x.date)
+  dplyr::mutate(last_update = latest_ihme_update)
 
 x.layer.ihme.geo = x.geo.state %>%
   left_join(x.layer.ihme, by = c('name' = 'location_name')) %>%
   drop_na(icuover_max_needed)
 
-write_layer_absolute(x.layer.ihme.geo, paste0("ihme_peak_dates_",x.date), db =T)
+latest_ihme_update_us = as.character(latest_ihme_update, format = '%m_%d_%Y')
+write_layer_absolute(x.layer.ihme.geo, paste0("ihme_peak_dates_",latest_ihme_update_us), db =T)
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # ATTR Health  ----
@@ -150,7 +161,7 @@ x.layer.staff.dt = st_read(coririsi_layer, "npi_drivetime_40_county") %>%
 
 
 #IHME
-x.layer.ihme = st_read(coririsi_layer, paste0("ihme_peak_dates_",x.date)) %>% 
+x.layer.ihme = st_read(coririsi_layer, paste0("ihme_peak_dates_",latest_ihme_update_us)) %>% 
   st_drop_geometry() %>% 
   dplyr::select(geoid_st,  ends_with("_date"), ends_with("_needed"))
 
@@ -253,9 +264,11 @@ dem_pillar = dem_pillar %>%
 proj_pillar = x.layer.table[, c("geoid", "name", "st_stusps" , 'icu_bed_max_needed', 'icu_bed_max_needed_100k', 'icuover_max_needed', "icuover_max_needed_100k")]
 proj_pillar = proj_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
-    proj_score_1 = ntile(-icuover_max_needed_100k, 100),
+    proj_score_1 = ntile(-icu_bed_max_needed_100k, 100),
     # Composite Index 2 uses rescale
     proj_score_2 = as.integer(rescale(-icuover_max_needed_100k, to = c(0, 100))))
+    #proj_score_2 = as.integer(rescale(-icu_bed_max_needed_100k, to = c(0, 100))))
+    #proj_score_2 = ntile(-icuover_max_needed_100k, 100))
 
 # Social-economic pillar ----
 se_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"svi_socioeconomic")]
@@ -264,32 +277,32 @@ se_pillar = se_pillar %>%
     se_score_1 = ntile(-svi_socioeconomic, 100))
 
 # Combine all
-all_index = x.layer.table[, c('geoid', 'name', 'st_stusps', 'icuover_max_date', 'icu_bed_max_date')] %>% 
+all_index = x.layer.table[, c('geoid', 'name', 'st_stusps','lat','lon', 'icuover_max_date', 'icu_bed_max_date')] %>% 
   left_join(beds_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(staff_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(dem_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(se_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   left_join(proj_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   dplyr::mutate(prep_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
-                prep_score_old = ( bed_score_1 + staff_score_2 + dem_score_1 + se_score_1 + proj_score_1) / 5,
-                prep_score_old = ntile(prep_score_old, 100),
+                prep_score_old = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_2) / 5,
                 prep_score_1 = ntile(prep_score, 100),
-                prep_score_2 = as.integer(rescale(prep_score, to = c(0, 100))),
+                prep_score_2 = ntile(prep_score_old, 100),
                 prep_level = case_when(prep_score_1 <= 20 ~ "Very Low", 
                                        prep_score_1 > 20 & prep_score_1 <= 40 ~ "Low", 
                                        prep_score_1 > 40 & prep_score_1 <= 60 ~ "Medium", 
                                        prep_score_1 > 60 & prep_score_1 <= 80 ~ "High", 
                                        prep_score_1 > 80 ~ "Very High"),
-                last_update = x.date) %>% 
+                last_update = latest_ihme_update) %>% 
   dplyr::mutate(svi_socioeconomic = round(svi_socioeconomic * 100)/100,
                 pct_65_over_2018 = round(pct_65_over_2018 * 10)/10,
                 total_estimated_bed_40_mins_100k = round(total_estimated_bed_40_mins_100k),
                 total_staff_dt_100k = round(total_staff_dt_100k),
-                icuover_max_needed_100k = round(icuover_max_needed_100k * 100)/100)
+                icuover_max_needed_100k = round(icuover_max_needed_100k * 100)/100,
+                lat = as.numeric(lat), 
+                lon = as.numeric(lon))
 
 names(all_index)
 write_layer_absolute(all_index, layer.name = "county_preparedness_score", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
-
 
 
 # Shareable version
@@ -297,6 +310,8 @@ all_index_share = all_index %>%
   dplyr::select(geoid,
                 name,
                 st_stusps,
+                lat,
+                lon,
                 prep_score = prep_score_1,
                 prep_level,
                 icuover_max_date,
@@ -312,11 +327,64 @@ all_index_share = all_index %>%
                 se_score = se_score_1,
                 svi_socioeconomic, 
                 covid_score = proj_score_1,
-                icuover_max_needed,
-                icuover_max_needed_100k,
+                icu_bed_max_needed, 
+                icu_bed_max_needed_100k,
                 last_ihme_update = last_update)
 
-write_layer_absolute(all_index_share, layer.name = "county_preparedness_score_v0_3", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
+names(all_index_share)
+
+write_layer_absolute(all_index_share, layer.name = "county_preparedness_score_v0_5", layer.type="pg", db=T, fs=T, new.server = T, new.server.overwrite = T)
+
+# State Average
+all_index_share_st = all_index_share %>% 
+  st_drop_geometry() %>% 
+  group_by(st_stusps) %>% 
+  dplyr::summarise(prep_score = mean(prep_score, na.rm = T), 
+                   pc_score = mean(pc_score, na.rm = T), 
+                   total_estimated_bed_40_mins = mean(total_estimated_bed_40_mins, na.rm = T), 
+                   total_estimated_bed_40_mins_100k = mean(total_estimated_bed_40_mins_100k, na.rm = T), 
+                   hr_score = mean(hr_score, na.rm = T), 
+                   total_staff_dt = mean(total_staff_dt, na.rm = T), 
+                   total_staff_dt_100k = mean(total_staff_dt_100k, na.rm = T), 
+                   dem_score = mean(dem_score, na.rm = T), 
+                   pct_65_over_2018 = mean(pct_65_over_2018, na.rm = T), 
+                   se_score = mean(se_score, na.rm = T), 
+                   svi_socioeconomic = mean(svi_socioeconomic, na.rm = T), 
+                   covid_score = mean(covid_score, na.rm = T), 
+                   icuover_max_needed = mean(icuover_max_needed, na.rm = T), 
+                   icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T), 
+                   last_ihme_update = first(last_ihme_update)) %>% 
+  ungroup()
+
+all_index_share_us = all_index_share %>% 
+  st_drop_geometry() %>% 
+  dplyr::mutate(country = "United States") %>%
+  group_by(country) %>% 
+  dplyr::summarise(prep_score = mean(prep_score, na.rm = T), 
+                   pc_score = mean(pc_score, na.rm = T), 
+                   total_estimated_bed_40_mins = mean(total_estimated_bed_40_mins, na.rm = T), 
+                   total_estimated_bed_40_mins_100k = mean(total_estimated_bed_40_mins_100k, na.rm = T), 
+                   hr_score = mean(hr_score, na.rm = T), 
+                   total_staff_dt = mean(total_staff_dt, na.rm = T), 
+                   total_staff_dt_100k = mean(total_staff_dt_100k, na.rm = T), 
+                   dem_score = mean(dem_score, na.rm = T), 
+                   pct_65_over_2018 = mean(pct_65_over_2018, na.rm = T), 
+                   se_score = mean(se_score, na.rm = T), 
+                   svi_socioeconomic = mean(svi_socioeconomic, na.rm = T), 
+                   covid_score = mean(covid_score, na.rm = T), 
+                   icuover_max_needed = mean(icuover_max_needed, na.rm = T), 
+                   icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T), 
+                   last_ihme_update = first(last_ihme_update)) %>% 
+  ungroup()
+
+
+path_st = paste0("/data/Github/proj-covid-19/output/county_preparedness_score_state_avg.csv")
+write.csv(all_index_share_st, path_st, row.names = F)
+system(paste0("curl -v -F file=@'",path_st,"' 'https://ruralinnovation.carto.com/u/ruralinnovation-admin/api/v1/imports/?api_key=", cartoconf$newcarto,"&privacy=link", "&collision_strategy=overwrite","'"))
+
+path_us = paste0("/data/Github/proj-covid-19/output/county_preparedness_score_us_avg.csv")
+write.csv(all_index_share_us, path_us, row.names = F)
+system(paste0("curl -v -F file=@'",path_us,"' 'https://ruralinnovation.carto.com/u/ruralinnovation-admin/api/v1/imports/?api_key=", cartoconf$newcarto,"&privacy=link", "&collision_strategy=overwrite","'"))
 
 
 rm(list = ls())
