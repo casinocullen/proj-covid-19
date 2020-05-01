@@ -149,60 +149,63 @@ x.hospital.dt.county = x.geo.county %>%
   st_drop_geometry()
 #TODO: What does `although coordinates are longitude/latitude, st_intersects assumes that they are planar` mean in our use case?
 
-#TODO: STOPPED HERE
-# Hospital Points
+# Get Hospital Points and attach county data
 x.hospital.beds = st_read(coririsi_layer, "definitive_healthcare_hospital_beds") %>% 
-  dplyr::filter(HOSPITAL_T %in% c('Critical Access Hospital', 'VA Hospital', 'Short Term Acute Care Hospital')) 
+  dplyr::filter(hospital_t %in% c('Critical Access Hospital', 'VA Hospital', 'Short Term Acute Care Hospital')) %>% 
+  st_join(x.geo.county)
 
+# Aggregate hospital data by county
 x.hospital.beds.county = x.hospital.beds %>% 
   st_drop_geometry() %>%
-  group_by(geoid_co) %>% 
-  dplyr::summarise(hospital_count =n_distinct(OBJECTID), 
-                   hospitals_name = str_c(HOSPITAL_N, collapse = ", "),
-                   total_licensed_bed = sum(NUM_LICENS), 
-                   total_staffed_bed = sum(NUM_STAFFE), 
-                   total_icu_bed = sum(NUM_ICU_BE), 
-                   median_bed_utiliz = median(BED_UTILIZ), 
-                   potential_increase_beds = sum(Potential_)) %>%
-  ungroup()
+  group_by(geoid) %>% 
+  dplyr::summarise(hospital_count =n_distinct(objectid), 
+                   hospitals_name = str_c(hospital_n, collapse = ", "),
+                   total_licensed_bed = sum(num_licens), 
+                   total_staffed_bed = sum(num_staffe), 
+                   total_icu_bed = sum(num_icu_be), 
+                   median_bed_utiliz = median(bed_utiliz), 
+                   potential_increase_beds = sum(potential)) %>%
+#TODO: What is ungroup doing here?
+    ungroup()
 
 
-# ACS
+# Get ACS fields
 x.layer.acs = dbReadTable(coririsi_layer, "acs_county") %>% 
   dplyr::select(GEOID, unemployed_pct_2018, under_poverty_level_pct_2018, capita_income_past_12_months_2018)
 
-# Staff
+# Get hospital staff data
 x.layer.staff = st_read(coririsi_layer, "hospital_critical_staff_by_county") %>% 
   st_drop_geometry()
 
-# Staff Drivetime
+# Get Staff Drivetime
 x.layer.staff.dt = st_read(coririsi_layer, "npi_drivetime_40_county") %>% 
   st_drop_geometry()
 
 
-#IHME
+# Get IHME data
 x.layer.ihme = st_read(coririsi_layer, paste0("ihme_peak_dates_",latest_ihme_update_us)) %>% 
   st_drop_geometry() %>% 
   dplyr::select(geoid_st,  ends_with("_date"), ends_with("_needed"))
 
 
 # JOIN ALL TABLES
-x.geo.county.join.pg = x.geo.county %>% 
-  left_join(x.hospital.dt.county, by = 'geoid') %>%
-  left_join(x.hospital.beds.county, by = c('geoid' = 'geoid_co')) %>%
-  left_join(x.layer.county, by = 'geoid') %>%
-  left_join(x.layer.staff, by = 'geoid') %>%
-  left_join(x.layer.staff.dt, by = 'geoid') %>%
-  left_join(x.layer.acs, by = c('geoid' = 'GEOID')) %>%
-  left_join(x.layer.svi, by = c('geoid' = 'FIPS')) %>% 
-  left_join(x.layer.case, by = c('geoid')) %>% 
-  left_join(x.layer.ihme, by = c('geoid_st')) %>% 
+x.geo.county.join.pg = x.geo.county %>% #26
+  left_join(x.hospital.dt.county, by = 'geoid') %>% #2
+  left_join(x.hospital.beds.county, by = c('geoid' = 'geoid')) %>% #7
+  left_join(x.layer.county, by = 'geoid') %>% #8
+  left_join(x.layer.staff, by = 'geoid') %>% #6
+  left_join(x.layer.staff.dt, by = 'geoid') %>% #6
+  left_join(x.layer.acs, by = c('geoid' = 'GEOID')) %>% #3
+  left_join(x.layer.svi, by = c('geoid' = 'FIPS')) %>% #5
+  left_join(x.layer.case, by = c('geoid')) %>% #5
+  left_join(x.layer.ihme, by = c('geoid_st')) %>% #12
   dplyr::mutate(pop_density = total_population_2018/land_sqmi, 
                 confirm_pct = confirm/total_population_2018 * 100,
                 death_pct = deaths/confirm * 100,
                 all_beds_40_mins_per_1000 = total_estimated_bed_40_mins * 1000/total_population_2018,
                 pct_65_over_2018 = population_65_over_2018/total_population_2018 * 100, 
-                pct_85_over_2018 = population_85_over_2018/total_population_2018 * 100,                
+                pct_85_over_2018 = population_85_over_2018/total_population_2018 * 100,
+                #TODO: Why not use the `digits` option for `round`. I think it would be more clear what is happening.
                 icu_beds_per_1000 = round(total_icu_bed * 10000/total_population_2018)/10,
                 icu_beds_per_1000_elder = round(total_icu_bed * 10000/population_65_over_2018)/10,
                 icu_beds_per_100k = round(total_icu_bed * 100000/total_population_2018),
@@ -231,6 +234,7 @@ names(x.geo.county.join.pg)
 # write layer
 write_layer_absolute(x.geo.county.join.pg, "attr_county_health", db = T)
 
+#TODO: STOPPED HERE
 
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # County preparedness score  ----
@@ -242,24 +246,31 @@ x.state.case = dbGetQuery(coririsi_layer, "SELECT st_stusps, sum(confirm) AS st_
 x.layer.name <- "attr_county_health"
 x.layer.table = st_read(coririsi_layer, x.layer.name) %>% 
   left_join(x.state.pop, by = c('geoid_st' = 'geoid')) %>% 
+  # Change NA to zero
+  # TODO: Is this an assumptions we want to make? If so, should we document it
   dplyr::mutate(confirm = ifelse(is.na(confirm), 0, confirm), 
+                #TODO: Not 100% sure what this is doing with -999 values
                 svi_socioeconomic = ifelse(svi_socioeconomic == -999, mean(svi_socioeconomic, na.rm = T), svi_socioeconomic), 
+                #TODO: Why are we calculating this again here instead of using `all_beds_40_mins_per_1000`
                 total_estimated_bed_40_mins_100k = total_estimated_bed_40_mins*100000/total_population_2018,
                 total_staff_100k = total_staff*100000/total_population_2018,
                 total_staff_dt_100k = total_staff_dt*100000/total_population_2018,
                 icu_bed_max_needed_100k = icu_bed_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018),
                 icuover_max_needed_100k = icuover_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018)) %>% 
+  #TODO: why are we dropping these?
   drop_na(pct_65_over_2018, svi_socioeconomic)
 
 # Beds pillar ----
 beds_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"total_estimated_bed_40_mins", "total_estimated_bed_40_mins_100k")]
 beds_pillar = beds_pillar %>%
   dplyr::mutate(
+    #TODO: should we be dropping these instead?
     total_estimated_bed_40_mins = ifelse(is.na(total_estimated_bed_40_mins), 0, total_estimated_bed_40_mins),
     total_estimated_bed_40_mins_100k = ifelse(is.na(total_estimated_bed_40_mins_100k), 0, total_estimated_bed_40_mins_100k),
     # Composite Index 1 uses percentile
     bed_score_1 = ntile(total_estimated_bed_40_mins_100k, 100),
     # Composite Index 2 uses rescale
+    #TODO: I don't really know what `recale` is doing
     bed_score_2 = as.integer(rescale(total_estimated_bed_40_mins_100k, to = c(0, 100))))
 
 # Staff pillar ----
@@ -269,10 +280,12 @@ staff_pillar = staff_pillar %>%
     total_staff_dt_100k = ifelse(is.na(total_staff_dt_100k), 0, total_staff_dt_100k),
     # Composite Index 1 uses percentile
     staff_score_1 = ntile(total_staff_dt_100k, 100),
+    #TODO: Should this be using `rescale` and `total_staff_dt_100k`?
     staff_score_2 = ntile(total_staff_100k, 100))
     
 
 # Demograhic pillar ----
+# Using `-` reverse the scale here because we want bigger numbers to be better
 dem_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"pct_65_over_2018")]
 dem_pillar = dem_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
@@ -281,16 +294,20 @@ dem_pillar = dem_pillar %>%
     dem_score_2 = as.integer(rescale(-pct_65_over_2018, to = c(0, 100))))
 
 # ICU beds shortage pillar ----
+# Using `-` reverse the scale here because we want bigger numbers to be better
 proj_pillar = x.layer.table[, c("geoid", "name", "st_stusps" , 'icu_bed_max_needed', 'icu_bed_max_needed_100k', 'icuover_max_needed', "icuover_max_needed_100k")]
 proj_pillar = proj_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
+    # This is the older calculation, used in prep_score_old
     proj_score_1 = ntile(-icu_bed_max_needed_100k, 100),
-    # Composite Index 2 uses rescale
+    # Composite Index 2 uses rescale, using in prep_score.
+    # This is the newer calculation
     proj_score_2 = as.integer(rescale(-icuover_max_needed_100k, to = c(0, 100))))
     #proj_score_2 = as.integer(rescale(-icu_bed_max_needed_100k, to = c(0, 100))))
     #proj_score_2 = ntile(-icuover_max_needed_100k, 100))
 
 # Social-economic pillar ----
+# Using `-` reverse the scale here because we want bigger numbers to be better
 se_pillar = x.layer.table[, c("geoid", "name", "st_stusps" ,"svi_socioeconomic")]
 se_pillar = se_pillar %>%
   dplyr::mutate(# Composite Index 1 uses percentile
@@ -298,11 +315,13 @@ se_pillar = se_pillar %>%
 
 # Combine all
 all_index = x.layer.table[, c('geoid', 'name', 'st_stusps','lat','lon', 'icuover_max_date', 'icu_bed_max_date')] %>% 
+  #TODO: Why are we joining by 'geoid', 'name', and 'st_stusps'?
   left_join(beds_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(staff_pillar %>% data.frame %>% dplyr::select(-geom) , by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(dem_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>%
   left_join(se_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
   left_join(proj_pillar %>% data.frame %>% dplyr::select(-geom), by= c('geoid', 'name', 'st_stusps')) %>% 
+  #TODO: could we change the name of `prep_score` here so we don't confuse it with the variable of the same name in `all_index_share`
   dplyr::mutate(prep_score = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_1) / 5,
                 prep_score_old = ( bed_score_1 + staff_score_1 + dem_score_1 + se_score_1 + proj_score_2) / 5,
                 prep_score_1 = ntile(prep_score, 100),
@@ -333,6 +352,7 @@ all_index_share = all_index %>%
                 lat,
                 lon,
                 prep_score = prep_score_1,
+                prep_score_alt = prep_score_2,
                 prep_level,
                 icuover_max_date,
                 icu_bed_max_date,
@@ -372,8 +392,10 @@ all_index_share_st = all_index_share %>%
                    svi_socioeconomic = mean(svi_socioeconomic, na.rm = T), 
                    covid_score = mean(covid_score, na.rm = T), 
                    icuover_max_needed = mean(icuover_max_needed, na.rm = T), 
-                   icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T), 
+                   icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T),
+                   #TODO: I like this better than `max` but still wish thare was an function that checked to make sure all values were the same with a clear name.
                    last_ihme_update = first(last_ihme_update)) %>% 
+  #TODO: why?
   ungroup()
 
 all_index_share_us = all_index_share %>% 
@@ -395,6 +417,7 @@ all_index_share_us = all_index_share %>%
                    icuover_max_needed = mean(icuover_max_needed, na.rm = T), 
                    icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T), 
                    last_ihme_update = first(last_ihme_update)) %>% 
+  #TODO: why?
   ungroup()
 
 
