@@ -1,5 +1,3 @@
-// A starting point for new source data repositories. Delete this comment and replace all [valriables] in square brackets.
-
 # Overview
 This is the data analyzing repository for COVID-19 and its impacts on the county level.
 Data sources:
