@@ -84,10 +84,8 @@ x.layer.ihme = x.src.ihme %>%
                 admis_max_needed = case_when(max(admis_mean) == admis_mean ~ admis_mean),
                 icuover_max_date = case_when(max(icuover_mean) == icuover_mean ~ date),
                 icuover_max_needed = case_when(max(icuover_mean) == icuover_mean ~ icuover_mean)) %>% 
-  #TODO: Don't know why we have to ungroup and regroup again here.
   ungroup() %>% 
   group_by(location_name) %>% 
-  #TODO: I assume `max` could be any function that returns one of the values since they all should be the same?
   dplyr::summarise_all(funs(max(., na.rm = TRUE))) %>%
   # Just keep the fields we created and the location name
   dplyr::select(location_name, ends_with("_date"), ends_with("_needed")) %>% 
@@ -111,32 +109,25 @@ write_layer_absolute(x.layer.ihme.geo, paste0("ihme_peak_dates_",latest_ihme_upd
 x.geo.county = st_read(coririsi_layer, 'geo_attr_county_pg') 
 
 # COVID-19 case
-#TODO: Have not done code review on code that created `x.layer.case`
 x.layer.case = st_read(coririsi_layer, "covid_19_county_latest") %>% 
   st_drop_geometry() %>% 
-  #TODO: Why `group_by`? Don't we just have one per county?
   group_by(geoid) %>% 
   dplyr::summarise_all(max) %>% 
   dplyr::select(geoid, covid_19_latest_update = latest_update, confirm, deaths, recovered, active)
 
 # Attr_health
-#TODO: Have not done code review on code that created `x.layer.county`
 x.layer.county = st_read(coririsi_layer, "acs_county_health") 
 
 # CDC SVI
-#TODO: Have not done code review on code that created `x.layer.svi`
 x.layer.svi = dbReadTable(coririsi_source, "cdc_svi") %>%
   dplyr::select(FIPS, EP_NOVEH, EP_MUNIT, EP_DISABL, RPL_THEME1, RPL_THEMES)
 
 # Hospital drive time
-#TODO: Have not done code review on code that created `x.hospital.dt`
-#TODO: We will want to update this once we have a new drivetime layer
 x.hospital.dt = st_read(coririsi_layer, "hospitals_drivetime_cori_pg") %>%
   st_transform(crs = 4269) %>% 
   dplyr::filter(type %in% c('CRITICAL ACCESS', 'GENERAL ACUTE CARE'), 
                 status == "OPEN") %>% 
   dplyr::select(-geoid) %>%
-  #TODO: What does -999 mean in the data? Should we be assuming no beds?
   dplyr::mutate(beds = ifelse(beds == -999, 0, beds),
                 hospital_name = name)
 
@@ -147,7 +138,6 @@ x.hospital.dt.county = x.geo.county %>%
   dplyr::summarise(hospitals_name_40_mins = str_c(hospital_name, collapse = ", "),
                    total_estimated_bed_40_mins = sum(beds)) %>% 
   st_drop_geometry()
-#TODO: What does `although coordinates are longitude/latitude, st_intersects assumes that they are planar` mean in our use case?
 
 # Get Hospital Points and attach county data
 x.hospital.beds = st_read(coririsi_layer, "definitive_healthcare_hospital_beds") %>% 
@@ -165,7 +155,6 @@ x.hospital.beds.county = x.hospital.beds %>%
                    total_icu_bed = sum(num_icu_be), 
                    median_bed_utiliz = median(bed_utiliz), 
                    potential_increase_beds = sum(potential)) %>%
-#TODO: What is ungroup doing here?
     ungroup()
 
 
@@ -234,8 +223,6 @@ names(x.geo.county.join.pg)
 # write layer
 write_layer_absolute(x.geo.county.join.pg, "attr_county_health", db = T)
 
-#TODO: STOPPED HERE
-
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
 # County preparedness score  ----
 # ≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠≠====
@@ -247,7 +234,6 @@ x.layer.name <- "attr_county_health"
 x.layer.table = st_read(coririsi_layer, x.layer.name) %>% 
   left_join(x.state.pop, by = c('geoid_st' = 'geoid')) %>% 
   # Change NA to zero
-  # TODO: Is this an assumptions we want to make? If so, should we document it
   dplyr::mutate(confirm = ifelse(is.na(confirm), 0, confirm), 
                 #TODO: Not 100% sure what this is doing with -999 values
                 svi_socioeconomic = ifelse(svi_socioeconomic == -999, mean(svi_socioeconomic, na.rm = T), svi_socioeconomic), 
@@ -257,7 +243,6 @@ x.layer.table = st_read(coririsi_layer, x.layer.name) %>%
                 total_staff_dt_100k = total_staff_dt*100000/total_population_2018,
                 icu_bed_max_needed_100k = icu_bed_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018),
                 icuover_max_needed_100k = icuover_max_needed*100000/st_total_population_2018 * (total_population_2018/st_total_population_2018)) %>% 
-  #TODO: why are we dropping these?
   drop_na(pct_65_over_2018, svi_socioeconomic)
 
 # Beds pillar ----
@@ -270,7 +255,6 @@ beds_pillar = beds_pillar %>%
     # Composite Index 1 uses percentile
     bed_score_1 = ntile(total_estimated_bed_40_mins_100k, 100),
     # Composite Index 2 uses rescale
-    #TODO: I don't really know what `recale` is doing
     bed_score_2 = as.integer(rescale(total_estimated_bed_40_mins_100k, to = c(0, 100))))
 
 # Staff pillar ----
@@ -280,7 +264,6 @@ staff_pillar = staff_pillar %>%
     total_staff_dt_100k = ifelse(is.na(total_staff_dt_100k), 0, total_staff_dt_100k),
     # Composite Index 1 uses percentile
     staff_score_1 = ntile(total_staff_dt_100k, 100),
-    #TODO: Should this be using `rescale` and `total_staff_dt_100k`?
     staff_score_2 = ntile(total_staff_100k, 100))
     
 
@@ -395,7 +378,6 @@ all_index_share_st = all_index_share %>%
                    icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T),
                    #TODO: I like this better than `max` but still wish thare was an function that checked to make sure all values were the same with a clear name.
                    last_ihme_update = first(last_ihme_update)) %>% 
-  #TODO: why?
   ungroup()
 
 all_index_share_us = all_index_share %>% 
@@ -417,7 +399,6 @@ all_index_share_us = all_index_share %>%
                    icuover_max_needed = mean(icuover_max_needed, na.rm = T), 
                    icuover_max_needed_100k = mean(icuover_max_needed_100k, na.rm = T), 
                    last_ihme_update = first(last_ihme_update)) %>% 
-  #TODO: why?
   ungroup()
 
 
