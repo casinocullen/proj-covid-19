@@ -10,6 +10,7 @@ Data sources:
 # Code descriptions
 - auto_update_county_preparedness.R
     * Generate the county prepardness score (published in https://www.statnews.com/feature/coronavirus/county-preparedness-scores/)
+    * Detailed methology/codebook could be found in https://docs.google.com/document/d/1i-HqD73N61QDX99S57kg8vZ2FSPi6mlwUT9Coa9O-mc/
 - SIR - Clean.ipynb
     * Testing Susceptible-Infected-Removed (SIR) model at the county level
 - covid_19_daily_update.R
